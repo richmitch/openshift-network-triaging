@@ -1,14 +1,14 @@
-### OpenShift Network Triage: rx_cache metrics on bonded interfaces
+### OpenShift Network Triage: capture RX metrics on bonded interfaces
 
-This repository contains a helper script, `triage_rx_cache.sh`, to triage potential node-level networking issues in OpenShift clusters by collecting `rx_cache_*` counters from `ethtool` on bonded interface slaves across all nodes.
+This repository contains a helper script, `capture_bond_metrics.sh`, to triage potential node-level networking issues in OpenShift clusters by collecting RX-related counters from `ethtool -S` on bonded interface slaves across all nodes. By default it focuses on `rx_cache_*` metrics and can include broader RX/GRO/XDP counters with `--extra-metrics`.
 
 ### What it does
 
 - **Discovers nodes** using `oc get nodes` (assumes you are logged in and have permissions).
 - **Finds bonded interfaces** on each node by inspecting `/proc/net/bonding/*` from within a node debug session.
 - **Captures ethtool stats** (`ethtool -S <iface>`) for each bond's slave interface.
-- **Extracts `rx_cache_*` metrics** and records their values.
-- **Flags potential issues** where any `rx_cache_*` value exceeds a threshold (default: > 0).
+- **Extracts `rx_cache_*` metrics** by default; optionally includes additional RX metrics with `--extra-metrics` (e.g., `rx_no_buffer`, `rx_dropped`, `gro_*`, `xdp_*`).
+- **Flags potential issues** where any `rx_cache_*` value exceeds a threshold (default: > 0) and highlights bond traffic imbalance.
 - **Outputs results** in both a human-readable table and a structured JSON document grouped by node → bond → interface → metric.
 
 ### Prerequisites
@@ -21,12 +21,15 @@ This repository contains a helper script, `triage_rx_cache.sh`, to triage potent
 Run from the repository root:
 
 ```bash
-./triage_rx_cache.sh
+./capture_bond_metrics.sh
 ```
 
 Options:
 
 - **`--threshold N`**: Only flag as an issue when value > N (default 0).
+- **`--label SELECTOR`**: Filter nodes by label.
+- **`--bond bond0[,bond1]`**: Filter to specific bonds.
+- **`--extra-metrics`**: Include additional RX/GRO/XDP metrics.
 - **`--table-only`**: Print only the table view.
 - **`--json-only`**: Print only the JSON view.
 
@@ -34,19 +37,19 @@ Examples:
 
 ```bash
 # Default: table + JSON; flag any non-zero counter
-./triage_rx_cache.sh
+./capture_bond_metrics.sh
 
 # Only JSON output, with a higher threshold
-./triage_rx_cache.sh --json-only --threshold 10
+./capture_bond_metrics.sh --json-only --threshold 10
 
 # Only the table view
-./triage_rx_cache.sh --table-only
+./capture_bond_metrics.sh --table-only
 ```
 
 ### Output
 
-- **Table**: columns for `NODE`, `BOND`, `INTERFACE`, `METRIC`, `VALUE`, `ISSUE`.
-- **JSON**: grouped as `nodes[] → bonds[] → interfaces[] → rx_cache{}` with an `issue` boolean per interface.
+- **Table**: columns for `NODE`, `BOND`, `INTERFACE`, `METRIC`, `VALUE`.
+- **JSON**: grouped as `nodes[] → bonds[] → interfaces[] → rx_cache{}` with an `issue` boolean per interface, plus `extra` metrics when `--extra-metrics` is used, and bond-level imbalance fields.
 
 Minimal JSON shape:
 
