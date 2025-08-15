@@ -128,15 +128,18 @@ get_all_nodes() {
 #   bond=<bond> iface=<iface> metric=<metric> value=<value>
 collect_on_node() {
   local node="$1"
-  oc debug "node/${node}" --quiet -- chroot /host env BOND_SELECT="'"${BOND_FILTER}"'" bash -lc '
+  oc debug "node/${node}" --quiet -- chroot /host env BOND_SELECT="${BOND_FILTER}" bash -lc '
     set -euo pipefail
+    # Normalize optional comma-separated bond selector (strip spaces)
+    BOND_SELECT_CLEAN="${BOND_SELECT:-}"
+    BOND_SELECT_CLEAN="${BOND_SELECT_CLEAN//[[:space:]]/}"
     [ -d /proc/net/bonding ] || exit 0
     for bf in /proc/net/bonding/*; do
       [ -e "$bf" ] || continue
       bond_name=$(basename "$bf")
       # Apply bond filter if provided (BOND_SELECT is a comma-separated list)
-      if [ -n "${BOND_SELECT:-}" ]; then
-        case ",${BOND_SELECT}," in
+      if [ -n "${BOND_SELECT_CLEAN}" ]; then
+        case ",${BOND_SELECT_CLEAN}," in
           *",${bond_name},"*) ;;
           *) continue ;;
         esac
