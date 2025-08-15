@@ -2,26 +2,38 @@
 
 set -euo pipefail
 
-# This script has been superseded by triage_bond_rx_metrics.sh
-# Keeping a thin wrapper for backward compatibility.
+# Triage RX-related ethtool stats on bonded interfaces across all OpenShift nodes.
+# - Assumes you are already logged into the cluster with sufficient permissions.
+# - Discovers bonds and their slave interfaces via /proc/net/bonding on each node.
+# - Collects ethtool -S <iface> RX-related counters for each bonded slave.
+# - By default collects only rx_cache_*; with --extra-metrics, collects additional RX metrics.
+# - Flags potential issues and bond imbalance using rx_cache_* counters.
+# - Prints a human-readable table and a JSON document grouped by node→bond→interface→metric.
 
 SCRIPT_NAME=$(basename "$0")
 
-exec "$(dirname "$0")/triage_bond_rx_metrics.sh" "$@"
+THRESHOLD=0
+OUTPUT_MODE="both" # values: both|table|json
+LABEL_SELECTOR=""
+IMBALANCE_PERCENT=80   # percent share threshold for rx_cache_reuse
+SKEW_RATIO=10          # ratio threshold for busy/full skew (max >= ratio * min)
+BOND_FILTER=""        # comma-separated bond names to include (e.g., bond0 or bond0,bond1)
+EXTRA_METRICS=0        # collect additional RX metrics beyond rx_cache_*
 
 print_usage() {
   cat <<EOF
-Usage: ${SCRIPT_NAME} [--threshold N] [--label key=value[,k2=v2]] [--bond bond0[,bond1]] [--imbalance-threshold PCT] [--skew-ratio N] [--table-only|--json-only]
+Usage: ${SCRIPT_NAME} [--threshold N] [--label key=value[,k2=v2]] [--bond bond0[,bond1]] [--imbalance-threshold PCT] [--skew-ratio N] [--extra-metrics] [--table-only|--json-only]
 
 Options:
-  -t, --threshold N   Numeric threshold to flag an issue (default: 0; issue if value > N)
-  -l, --label SELECT  Label selector to filter nodes (e.g. role=worker or 'k1=v1,k2=v2')
-  -b, --bond NAMES    Comma-separated list of bond device names to include (e.g. bond0 or bond0,bond1)
+  -t, --threshold N            Numeric threshold to flag an issue (default: 0; issue if value > N)
+  -l, --label SELECT           Label selector to filter nodes (e.g. role=worker or 'k1=v1,k2=v2')
+  -b, --bond NAMES             Comma-separated list of bond device names to include (e.g. bond0 or bond0,bond1)
       --imbalance-threshold PCT  Percent share on a bond's top slave for rx_cache_reuse to flag imbalance (default: 80)
       --skew-ratio N             Ratio for rx_cache_busy/full skew across bond slaves to flag imbalance (default: 10)
-      --table-only    Print only the table output
-      --json-only     Print only the JSON output
-  -h, --help          Show this help
+      --extra-metrics            Include additional RX/GRO/XDP metrics (rx_no_buffer, rx_dropped, gro_*, xdp_*, etc.)
+      --table-only               Print only the table output
+      --json-only                Print only the JSON output
+  -h, --help                   Show this help
 
 Notes:
   - Requires 'oc' access with permission to run 'oc debug node/<node> ...'.
@@ -84,6 +96,10 @@ while [[ $# -gt 0 ]]; do
       LABEL_SELECTOR=$1
       shift
       ;;
+    --extra-metrics)
+      EXTRA_METRICS=1
+      shift
+      ;;
     -h|--help)
       print_usage
       exit 0
@@ -95,8 +111,6 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
-
- # (deferred) bond imbalance computation occurs later after data collection
 
 require_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -119,12 +133,17 @@ get_all_nodes() {
 #   bond=<bond> iface=<iface> metric=<metric> value=<value>
 collect_on_node() {
   local node="$1"
-  oc debug "node/${node}" --quiet -- chroot /host env BOND_SELECT="${BOND_FILTER}" bash -lc '
+  oc debug "node/${node}" --quiet -- chroot /host env BOND_SELECT="${BOND_FILTER}" EXTRA_METRICS="${EXTRA_METRICS}" bash -lc '
     set -euo pipefail
     # Normalize optional comma-separated bond selector (strip spaces)
     BOND_SELECT_CLEAN="${BOND_SELECT:-}"
     BOND_SELECT_CLEAN="${BOND_SELECT_CLEAN//[[:space:]]/}"
     [ -d /proc/net/bonding ] || exit 0
+    # Build metric pattern
+    pattern="^[[:space:]]*rx_cache_"
+    if [ "${EXTRA_METRICS:-0}" = "1" ]; then
+      pattern="^[[:space:]]*(rx_cache_|rx_no_buffer(_count)?|rx_alloc_failed|rx_page_alloc_fail|rx_desc_drop|rx_no_desc_avail|rx_missed_desc|rx_ring_full|rx_errors|rx_crc_errors|rx_length_errors|rx_fifo_errors|rx_over_errors|rx_missed_errors|rx_dropped|rx_queue_dropped|rx_csum_(err|errors|none)|gro_(packets|merged)|xdp_(drop|tx_errors|redirect_errors)|rx_steer_missed_packets|rx_wqe_err)"
+    fi
     for bf in /proc/net/bonding/*; do
       [ -e "$bf" ] || continue
       bond_name=$(basename "$bf")
@@ -137,8 +156,8 @@ collect_on_node() {
       fi
       # Extract slave interface names
       awk -F": " "/^Slave Interface:/ {print \$2}" "$bf" | while read -r iface; do
-        # ethtool may not expose rx_cache_* for all drivers; ignore errors
-        ethtool -S "$iface" 2>/dev/null | awk -v bond="$bond_name" -v iface="$iface" -F": " '\''/^[[:space:]]*rx_cache_/ {gsub(/^[[:space:]]+/, "", $1); printf "bond=%s iface=%s metric=%s value=%s\n", bond, iface, $1, $2}'\''
+        # ethtool may not expose all metrics for all drivers; ignore errors
+        ethtool -S "$iface" 2>/dev/null | awk -v bond="$bond_name" -v iface="$iface" -v pat="$pattern" -F": " '\''$0 ~ pat {gsub(/^[[:space:]]+/, "", $1); printf "bond=%s iface=%s metric=%s value=%s\n", bond, iface, $1, $2}'\''
       done
     done
   ' 2>/dev/null | awk -v n="$node" '/^bond=/{print "node=" n " " $0}'
@@ -170,7 +189,7 @@ for node in "${NODES[@]}"; do
 done
 
 if [[ ${#RAW_RESULTS[@]} -eq 0 ]]; then
-  echo "No bonded interfaces with rx_cache_* statistics found on any node." >&2
+  echo "No bonded interfaces with selected statistics found on any node." >&2
   # Still print an empty JSON if requested
   if [[ "$OUTPUT_MODE" == "json" || "$OUTPUT_MODE" == "both" ]]; then
     echo '{"nodes":[]}'
@@ -192,7 +211,7 @@ declare -A SET_IFACES=()       # key: node|bond|iface
 declare -A METRIC_VALUE=()     # key: node|bond|iface|metric -> value
 declare -A IFACE_HAS_ISSUE=()  # key: node|bond|iface -> 1
 
-# Bond-level imbalance tracking
+# Bond-level imbalance tracking (based on rx_cache_* only)
 declare -A BOND_IMBALANCED=()         # key: node|bond -> 1
 declare -A BOND_IMBALANCE_REASONS=()  # key: node|bond -> string (semicolon-separated)
 declare -A BOND_TOP_REUSE_IFACE=()    # key: node|bond -> iface name
@@ -225,7 +244,7 @@ for line in "${SORTED_RESULTS[@]}"; do
   SET_BONDS["$node|$bond"]=1
   SET_IFACES["$node|$bond|$iface"]=1
   METRIC_VALUE["$node|$bond|$iface|$metric"]=$value
-  if [[ "$value" =~ ^[0-9]+$ ]] && (( value > THRESHOLD )); then
+  if [[ "$metric" == rx_cache_* && "$value" =~ ^[0-9]+$ ]] && (( value > THRESHOLD )); then
     IFACE_HAS_ISSUE["$node|$bond|$iface"]=1
   fi
 done
@@ -298,7 +317,6 @@ print_json() {
       local fullSkew=${BOND_FULL_SKEW_RATIO[$kb]:-0}
       printf '{"name":"%s","imbalance":%s,"imbalanceReasons":[' "$bond" "$imb"
       if [[ -n "$reasons" ]]; then
-        # reasons is a semicolon-separated string; print as single JSON string to avoid complex splitting
         printf '"%s"' "$reasons"
       fi
       printf '],"topReuse":{"interface":"%s","sharePercent":%s},"busySkewRatio":%s,"fullSkewRatio":%s,"interfaces":[' \
@@ -313,17 +331,41 @@ print_json() {
         local iface_issue=0
         printf '{"name":"%s","rx_cache":{' "$iface"
         first_metric=1
-        # metrics for node|bond|iface
+        # print rx_cache_* first
         while IFS= read -r metric_key; do
           local metric=${metric_key##*|}
-          local value=${METRIC_VALUE["$node|${bond}|${iface}|${metric}"]}
-          [[ "$value" =~ ^[0-9]+$ ]] || value=0
-          if (( value > THRESHOLD )); then iface_issue=1; fi
-          if [[ $first_metric -eq 0 ]]; then printf ','; fi
-          first_metric=0
-          printf '"%s":%s' "$metric" "$value"
+          case "$metric" in
+            rx_cache_*)
+              local value=${METRIC_VALUE["$node|${bond}|${iface}|${metric}"]}
+              [[ "$value" =~ ^[0-9]+$ ]] || value=0
+              if (( value > THRESHOLD )); then iface_issue=1; fi
+              if [[ $first_metric -eq 0 ]]; then printf ','; fi
+              first_metric=0
+              printf '"%s":%s' "$metric" "$value"
+            ;;
+          esac
         done < <(printf '%s\n' "${!METRIC_VALUE[@]}" | awk -v n="$node" -v b="$bond" -v i="$iface" -F'|' '$1==n && $2==b && $3==i {print $0}' | sort)
-        printf '},"issue":%s}' "$([[ $iface_issue -eq 1 ]] && echo true || echo false)"
+        printf '}'
+        if [[ $EXTRA_METRICS -eq 1 ]]; then
+          # print non-rx_cache metrics under "extra"
+          printf ',"extra":{'
+          local fm2=1
+          while IFS= read -r metric_key; do
+            local metric=${metric_key##*|}
+            case "$metric" in
+              rx_cache_*) ;;
+              *)
+                local value=${METRIC_VALUE["$node|${bond}|${iface}|${metric}"]}
+                [[ "$value" =~ ^[0-9]+$ ]] || value=0
+                if [[ $fm2 -eq 0 ]]; then printf ','; fi
+                fm2=0
+                printf '"%s":%s' "$metric" "$value"
+              ;;
+            esac
+          done < <(printf '%s\n' "${!METRIC_VALUE[@]}" | awk -v n="$node" -v b="$bond" -v i="$iface" -F'|' '$1==n && $2==b && $3==i {print $0}' | sort)
+          printf '}'
+        fi
+        printf ',"issue":%s}' "$([[ $iface_issue -eq 1 ]] && echo true || echo false)"
       done < <(printf '%s\n' "${!SET_IFACES[@]}" | awk -v n="$node" -v b="$bond" -F'|' '$1==n && $2==b {print $0}' | sort)
       printf ']}'
     done < <(printf '%s\n' "${!SET_BONDS[@]}" | awk -v n="$node" -F'|' '$1==n {print $0}' | sort)
