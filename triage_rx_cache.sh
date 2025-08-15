@@ -186,54 +186,38 @@ for line in "${SORTED_RESULTS[@]}"; do
 done
 
 print_table() {
-  # Determine dynamic widths from data and headers
-  local hdr_node="NODE" hdr_bond="BOND" hdr_iface="INTERFACE" hdr_metric="METRIC" hdr_value="VALUE" hdr_issue="ISSUE"
-  local w_node=${#hdr_node}
-  local w_bond=${#hdr_bond}
-  local w_iface=${#hdr_iface}
-  local w_metric=${#hdr_metric}
-  local w_value=${#hdr_value}
-  local w_issue=${#hdr_issue}
-
-  local node bond iface metric value issue
-  for line in "${SORTED_RESULTS[@]}"; do
-    IFS=$'\t' read -r node bond iface metric value < <(parse_line_tokens "$line")
-    [[ -n "$node" ]] || continue
-    (( ${#node}   > w_node  )) && w_node=${#node}
-    (( ${#bond}   > w_bond  )) && w_bond=${#bond}
-    (( ${#iface}  > w_iface )) && w_iface=${#iface}
-    (( ${#metric} > w_metric)) && w_metric=${#metric}
-    (( ${#value}  > w_value )) && w_value=${#value}
-    # issue will be 'yes' or 'no'
-  done
-  (( 3 > w_issue )) && w_issue=3 # length of 'yes'
-
-  # Helper to print a separator of dashes matching widths
-  local sep_node sep_bond sep_iface sep_metric sep_value sep_issue
-  sep_node=$(printf '%*s' "$w_node" "" | tr ' ' '-')
-  sep_bond=$(printf '%*s' "$w_bond" "" | tr ' ' '-')
-  sep_iface=$(printf '%*s' "$w_iface" "" | tr ' ' '-')
-  sep_metric=$(printf '%*s' "$w_metric" "" | tr ' ' '-')
-  sep_value=$(printf '%*s' "$w_value" "" | tr ' ' '-')
-  sep_issue=$(printf '%*s' "$w_issue" "" | tr ' ' '-')
-
-  # Header
-  printf "%-${w_node}s %-${w_bond}s %-${w_iface}s %-${w_metric}s %${w_value}s %-${w_issue}s\n" \
-    "NODE" "BOND" "INTERFACE" "METRIC" "VALUE" "ISSUE"
-  printf "%-${w_node}s %-${w_bond}s %-${w_iface}s %-${w_metric}s %${w_value}s %-${w_issue}s\n" \
-    "$sep_node" "$sep_bond" "$sep_iface" "$sep_metric" "$sep_value" "$sep_issue"
-
-  # Rows
-  for line in "${SORTED_RESULTS[@]}"; do
-    IFS=$'\t' read -r node bond iface metric value < <(parse_line_tokens "$line")
-    [[ -n "$node" ]] || continue
-    issue="no"
-    if [[ "$value" =~ ^[0-9]+$ ]] && (( value > THRESHOLD )); then
-      issue="yes"
-    fi
-    printf "%-${w_node}s %-${w_bond}s %-${w_iface}s %-${w_metric}s %${w_value}s %-${w_issue}s\n" \
-      "$node" "$bond" "$iface" "$metric" "$value" "$issue"
-  done
+  # Build a TSV of header + rows and let awk compute widths and render table.
+  {
+    printf 'NODE\tBOND\tINTERFACE\tMETRIC\tVALUE\tISSUE\n'
+    local node bond iface metric value issue
+    for line in "${SORTED_RESULTS[@]}"; do
+      IFS=$'\t' read -r node bond iface metric value < <(parse_line_tokens "$line")
+      [[ -n "$node" ]] || continue
+      issue="no"
+      if [[ "$value" =~ ^[0-9]+$ ]] && (( value > THRESHOLD )); then
+        issue="yes"
+      fi
+      printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$node" "$bond" "$iface" "$metric" "$value" "$issue"
+    done
+  } | awk -F'\t' '
+    function dashes(n,  s,i){ s=""; for(i=0;i<n;i++) s=s"-"; return s }
+    {
+      rows[NR,1]=$1; rows[NR,2]=$2; rows[NR,3]=$3; rows[NR,4]=$4; rows[NR,5]=$5; rows[NR,6]=$6;
+      for(i=1;i<=6;i++){ l=length($i); if (l>width[i]) width[i]=l }
+      maxNR=NR
+    }
+    END{
+      # Format strings: left-align cols 1-4 and 6, right-align col 5
+      fmt=sprintf("%%-%ds %%-%ds %%-%ds %%-%ds %%%ds %%-%ds\n", width[1],width[2],width[3],width[4],width[5],width[6])
+      # Header
+      printf fmt, rows[1,1], rows[1,2], rows[1,3], rows[1,4], rows[1,5], rows[1,6]
+      # Separator
+      printf fmt, dashes(width[1]), dashes(width[2]), dashes(width[3]), dashes(width[4]), dashes(width[5]), dashes(width[6])
+      # Data rows
+      for(n=2;n<=maxNR;n++){
+        printf fmt, rows[n,1], rows[n,2], rows[n,3], rows[n,4], rows[n,5], rows[n,6]
+      }
+    }'
 }
 
 print_json() {
