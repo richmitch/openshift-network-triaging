@@ -14,14 +14,18 @@ SCRIPT_NAME=$(basename "$0")
 THRESHOLD=0
 OUTPUT_MODE="both" # values: both|table|json
 LABEL_SELECTOR=""
+IMBALANCE_PERCENT=80   # percent share threshold for rx_cache_reuse
+SKEW_RATIO=10          # ratio threshold for busy/full skew (max >= ratio * min)
 
 print_usage() {
   cat <<EOF
-Usage: ${SCRIPT_NAME} [--threshold N] [--label key=value[,k2=v2]] [--table-only|--json-only]
+Usage: ${SCRIPT_NAME} [--threshold N] [--label key=value[,k2=v2]] [--imbalance-threshold PCT] [--skew-ratio N] [--table-only|--json-only]
 
 Options:
   -t, --threshold N   Numeric threshold to flag an issue (default: 0; issue if value > N)
   -l, --label SELECT  Label selector to filter nodes (e.g. role=worker or 'k1=v1,k2=v2')
+      --imbalance-threshold PCT  Percent share on a bond's top slave for rx_cache_reuse to flag imbalance (default: 80)
+      --skew-ratio N             Ratio for rx_cache_busy/full skew across bond slaves to flag imbalance (default: 10)
       --table-only    Print only the table output
       --json-only     Print only the JSON output
   -h, --help          Show this help
@@ -51,6 +55,24 @@ while [[ $# -gt 0 ]]; do
       OUTPUT_MODE="json"
       shift
       ;;
+    --imbalance-threshold)
+      shift
+      if [[ $# -eq 0 || ! "$1" =~ ^[0-9]+$ ]]; then
+        echo "Error: --imbalance-threshold requires a non-negative integer percent" >&2
+        exit 1
+      fi
+      IMBALANCE_PERCENT=$1
+      shift
+      ;;
+    --skew-ratio)
+      shift
+      if [[ $# -eq 0 || ! "$1" =~ ^[0-9]+$ ]]; then
+        echo "Error: --skew-ratio requires a positive integer" >&2
+        exit 1
+      fi
+      SKEW_RATIO=$1
+      shift
+      ;;
     -l|--label)
       shift
       if [[ $# -eq 0 ]]; then
@@ -71,6 +93,9 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+# Compute bond-level imbalance before printing
+compute_bond_imbalance
 
 require_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -155,6 +180,14 @@ declare -A SET_IFACES=()       # key: node|bond|iface
 declare -A METRIC_VALUE=()     # key: node|bond|iface|metric -> value
 declare -A IFACE_HAS_ISSUE=()  # key: node|bond|iface -> 1
 
+# Bond-level imbalance tracking
+declare -A BOND_IMBALANCED=()         # key: node|bond -> 1
+declare -A BOND_IMBALANCE_REASONS=()  # key: node|bond -> string (semicolon-separated)
+declare -A BOND_TOP_REUSE_IFACE=()    # key: node|bond -> iface name
+declare -A BOND_TOP_REUSE_SHARE=()    # key: node|bond -> integer percent
+declare -A BOND_BUSY_SKEW_RATIO=()    # key: node|bond -> integer ratio (max/min)
+declare -A BOND_FULL_SKEW_RATIO=()    # key: node|bond -> integer ratio (max/min)
+
 parse_line_tokens() {
   local line="$1"
   local _node="" _bond="" _iface="" _metric="" _value=""
@@ -218,6 +251,18 @@ print_table() {
         printf fmt, rows[n,1], rows[n,2], rows[n,3], rows[n,4], rows[n,5], rows[n,6]
       }
     }'
+
+  # Imbalance summary
+  if [[ -n "${!BOND_IMBALANCED[@]}" ]]; then
+    echo
+    echo "Imbalance summary (reuse_share >= ${IMBALANCE_PERCENT}% or skew >= ${SKEW_RATIO}x):"
+    # Sort by node|bond key for stable output
+    printf '%s\n' "${!BOND_IMBALANCED[@]}" | sort | while IFS= read -r kb; do
+      node=${kb%%|*}; bond=${kb#*|}
+      reasons=${BOND_IMBALANCE_REASONS[$kb]}
+      echo "- ${node} ${bond}: ${reasons}"
+    done
+  fi
 }
 
 print_json() {
@@ -235,7 +280,21 @@ print_json() {
       local bond=${bond_key#*|}
       if [[ $first_bond -eq 0 ]]; then printf ','; fi
       first_bond=0
-      printf '{"name":"%s","interfaces":[' "$bond"
+      # Bond-level imbalance fields
+      local kb="$node|$bond"
+      local imb=$([[ -n "${BOND_IMBALANCED[$kb]:-}" ]] && echo true || echo false)
+      local reasons=${BOND_IMBALANCE_REASONS[$kb]:-}
+      local topIface=${BOND_TOP_REUSE_IFACE[$kb]:-}
+      local topShare=${BOND_TOP_REUSE_SHARE[$kb]:-0}
+      local busySkew=${BOND_BUSY_SKEW_RATIO[$kb]:-0}
+      local fullSkew=${BOND_FULL_SKEW_RATIO[$kb]:-0}
+      printf '{"name":"%s","imbalance":%s,"imbalanceReasons":[' "$bond" "$imb"
+      if [[ -n "$reasons" ]]; then
+        # reasons is a semicolon-separated string; print as single JSON string to avoid complex splitting
+        printf '"%s"' "$reasons"
+      fi
+      printf '],"topReuse":{"interface":"%s","sharePercent":%s},"busySkewRatio":%s,"fullSkewRatio":%s,"interfaces":[' \
+        "$topIface" "$topShare" "$busySkew" "$fullSkew"
       first_iface=1
       # interfaces for node|bond
       while IFS= read -r iface_key; do
@@ -264,6 +323,90 @@ print_json() {
   done < <(printf '%s\n' "${!SET_NODES[@]}" | sort)
   printf ']}'
   printf '\n'
+}
+
+# Compute bond-level imbalance after metrics are collected
+compute_bond_imbalance() {
+  local node bond iface kb kbi reuse total_reuse max_reuse max_iface
+  local busy max_busy min_busy full max_full min_full
+  for kb in "${!SET_BONDS[@]}"; do
+    node=${kb%%|*}; bond=${kb#*|}
+    total_reuse=0
+    max_reuse=0
+    max_iface=""
+    max_busy=0; min_busy=0
+    max_full=0; min_full=0
+    # Iterate interfaces for this bond
+    while IFS= read -r kbi; do
+      iface=${kbi##*|}
+      # reuse
+      reuse=${METRIC_VALUE["$node|$bond|$iface|rx_cache_reuse"]:-0}
+      [[ "$reuse" =~ ^[0-9]+$ ]] || reuse=0
+      (( total_reuse += reuse ))
+      if (( reuse > max_reuse )); then max_reuse=$reuse; max_iface=$iface; fi
+      # busy
+      busy=${METRIC_VALUE["$node|$bond|$iface|rx_cache_busy"]:-0}
+      [[ "$busy" =~ ^[0-9]+$ ]] || busy=0
+      if (( busy > max_busy )); then max_busy=$busy; fi
+      if (( busy > 0 )); then
+        if (( min_busy == 0 || busy < min_busy )); then min_busy=$busy; fi
+      fi
+      # full
+      full=${METRIC_VALUE["$node|$bond|$iface|rx_cache_full"]:-0}
+      [[ "$full" =~ ^[0-9]+$ ]] || full=0
+      if (( full > max_full )); then max_full=$full; fi
+      if (( full > 0 )); then
+        if (( min_full == 0 || full < min_full )); then min_full=$full; fi
+      fi
+    done < <(printf '%s\n' "${!SET_IFACES[@]}" | awk -v n="$node" -v b="$bond" -F'\|' '$1==n && $2==b {print $0}' | sort)
+
+    local reasons=()
+    # reuse share
+    local share=0
+    if (( total_reuse > 0 )); then
+      share=$(( max_reuse * 100 / total_reuse ))
+      BOND_TOP_REUSE_SHARE["$kb"]=$share
+      BOND_TOP_REUSE_IFACE["$kb"]=$max_iface
+      if (( share >= IMBALANCE_PERCENT )); then
+        reasons+=("top rx_cache_reuse share ${share}% on ${max_iface}")
+      fi
+    else
+      BOND_TOP_REUSE_SHARE["$kb"]=0
+      BOND_TOP_REUSE_IFACE["$kb"]=""
+    fi
+
+    # busy skew
+    local busy_skew=0
+    if (( min_busy == 0 && max_busy > 0 )); then
+      busy_skew=999999
+    elif (( min_busy > 0 )); then
+      busy_skew=$(( max_busy / min_busy ))
+    fi
+    BOND_BUSY_SKEW_RATIO["$kb"]=$busy_skew
+    if (( busy_skew >= SKEW_RATIO )); then
+      reasons+=("rx_cache_busy skew ${busy_skew}x")
+    }
+
+    # full skew
+    local full_skew=0
+    if (( min_full == 0 && max_full > 0 )); then
+      full_skew=999999
+    elif (( min_full > 0 )); then
+      full_skew=$(( max_full / min_full ))
+    fi
+    BOND_FULL_SKEW_RATIO["$kb"]=$full_skew
+    if (( full_skew >= SKEW_RATIO )); then
+      reasons+=("rx_cache_full skew ${full_skew}x")
+    fi
+
+    if (( ${#reasons[@]} > 0 )); then
+      BOND_IMBALANCED["$kb"]=1
+      # Join reasons with semicolons
+      local joined="${reasons[0]}"; local i
+      for ((i=1;i<${#reasons[@]};i++)); do joined+="; ${reasons[$i]}"; done
+      BOND_IMBALANCE_REASONS["$kb"]=$joined
+    fi
+  done
 }
 
 case "$OUTPUT_MODE" in
