@@ -1,0 +1,62 @@
+$ ./capture_bond_metrics.sh -l 'node-role.kubernetes.io/worker=' --table-only --bond bond0 --custom-metrics tx_csum_partial,tx_xmit_more,tx_pci_signal_integrity
+NODE                                    BOND  INTERFACE METRIC                       VALUE
+--------------------------------------- ----- --------- ----------------------- ----------
+compute1.ocp008pp002400.vodafone.com.au bond0 ens1f0np0 rx_cache_busy            249620607
+compute1.ocp008pp002400.vodafone.com.au bond0 ens1f0np0 rx_cache_empty              447823
+compute1.ocp008pp002400.vodafone.com.au bond0 ens1f0np0 rx_cache_full            249602878
+compute1.ocp008pp002400.vodafone.com.au bond0 ens1f0np0 rx_cache_reuse          1949336626
+compute1.ocp008pp002400.vodafone.com.au bond0 ens1f0np0 rx_cache_waive              176705
+compute1.ocp008pp002400.vodafone.com.au bond0 ens1f0np0 tx_csum_partial          935902302
+compute1.ocp008pp002400.vodafone.com.au bond0 ens1f0np0 tx_csum_partial_inner            0
+compute1.ocp008pp002400.vodafone.com.au bond0 ens1f0np0 tx_pci_signal_integrity          2
+compute1.ocp008pp002400.vodafone.com.au bond0 ens1f0np0 tx_xmit_more              22175624
+compute1.ocp008pp002400.vodafone.com.au bond0 ens1f1np1 rx_cache_busy               302121
+compute1.ocp008pp002400.vodafone.com.au bond0 ens1f1np1 rx_cache_empty              282240
+compute1.ocp008pp002400.vodafone.com.au bond0 ens1f1np1 rx_cache_full               294864
+compute1.ocp008pp002400.vodafone.com.au bond0 ens1f1np1 rx_cache_reuse           263007191
+compute1.ocp008pp002400.vodafone.com.au bond0 ens1f1np1 rx_cache_waive                   0
+compute1.ocp008pp002400.vodafone.com.au bond0 ens1f1np1 tx_csum_partial             531365
+compute1.ocp008pp002400.vodafone.com.au bond0 ens1f1np1 tx_csum_partial_inner            0
+compute1.ocp008pp002400.vodafone.com.au bond0 ens1f1np1 tx_pci_signal_integrity          2
+compute1.ocp008pp002400.vodafone.com.au bond0 ens1f1np1 tx_xmit_more                 69163
+compute2.ocp008pp002400.vodafone.com.au bond0 ens1f0np0 rx_cache_busy              5926961
+compute2.ocp008pp002400.vodafone.com.au bond0 ens1f0np0 rx_cache_empty              334092
+compute2.ocp008pp002400.vodafone.com.au bond0 ens1f0np0 rx_cache_full              5899186
+compute2.ocp008pp002400.vodafone.com.au bond0 ens1f0np0 rx_cache_reuse          1878622659
+compute2.ocp008pp002400.vodafone.com.au bond0 ens1f0np0 rx_cache_waive               72444
+compute2.ocp008pp002400.vodafone.com.au bond0 ens1f0np0 tx_csum_partial         4154360882
+compute2.ocp008pp002400.vodafone.com.au bond0 ens1f0np0 tx_csum_partial_inner            0
+compute2.ocp008pp002400.vodafone.com.au bond0 ens1f0np0 tx_pci_signal_integrity          1
+compute2.ocp008pp002400.vodafone.com.au bond0 ens1f0np0 tx_xmit_more               2030078
+compute2.ocp008pp002400.vodafone.com.au bond0 ens1f1np1 rx_cache_busy               376035
+compute2.ocp008pp002400.vodafone.com.au bond0 ens1f1np1 rx_cache_empty              282240
+compute2.ocp008pp002400.vodafone.com.au bond0 ens1f1np1 rx_cache_full               368761
+compute2.ocp008pp002400.vodafone.com.au bond0 ens1f1np1 rx_cache_reuse           427191453
+compute2.ocp008pp002400.vodafone.com.au bond0 ens1f1np1 rx_cache_waive                   0
+compute2.ocp008pp002400.vodafone.com.au bond0 ens1f1np1 tx_csum_partial            3394599
+compute2.ocp008pp002400.vodafone.com.au bond0 ens1f1np1 tx_csum_partial_inner            0
+compute2.ocp008pp002400.vodafone.com.au bond0 ens1f1np1 tx_pci_signal_integrity          1
+compute2.ocp008pp002400.vodafone.com.au bond0 ens1f1np1 tx_xmit_more                 43346
+compute3.ocp008pp002400.vodafone.com.au bond0 ens1f0np0 rx_cache_busy               819522
+compute3.ocp008pp002400.vodafone.com.au bond0 ens1f0np0 rx_cache_empty              379883
+compute3.ocp008pp002400.vodafone.com.au bond0 ens1f0np0 rx_cache_full               766461
+compute3.ocp008pp002400.vodafone.com.au bond0 ens1f0np0 rx_cache_reuse           333896403
+compute3.ocp008pp002400.vodafone.com.au bond0 ens1f0np0 rx_cache_waive              143421
+compute3.ocp008pp002400.vodafone.com.au bond0 ens1f0np0 tx_csum_partial          497920010
+compute3.ocp008pp002400.vodafone.com.au bond0 ens1f0np0 tx_csum_partial_inner            0
+compute3.ocp008pp002400.vodafone.com.au bond0 ens1f0np0 tx_pci_signal_integrity          1
+compute3.ocp008pp002400.vodafone.com.au bond0 ens1f0np0 tx_xmit_more                356528
+compute3.ocp008pp002400.vodafone.com.au bond0 ens1f1np1 rx_cache_busy               408924
+compute3.ocp008pp002400.vodafone.com.au bond0 ens1f1np1 rx_cache_empty              282240
+compute3.ocp008pp002400.vodafone.com.au bond0 ens1f1np1 rx_cache_full               403651
+compute3.ocp008pp002400.vodafone.com.au bond0 ens1f1np1 rx_cache_reuse            82157988
+compute3.ocp008pp002400.vodafone.com.au bond0 ens1f1np1 rx_cache_waive                   0
+compute3.ocp008pp002400.vodafone.com.au bond0 ens1f1np1 tx_csum_partial                 29
+compute3.ocp008pp002400.vodafone.com.au bond0 ens1f1np1 tx_csum_partial_inner            0
+compute3.ocp008pp002400.vodafone.com.au bond0 ens1f1np1 tx_pci_signal_integrity          1
+compute3.ocp008pp002400.vodafone.com.au bond0 ens1f1np1 tx_xmit_more                  3672
+
+Imbalance summary (reuse_share >= 80% or skew >= 10x):
+- compute1.ocp008pp002400.vodafone.com.au bond0: top rx_cache_reuse share 88% on ens1f0np0; rx_cache_busy skew 826x; rx_cache_full skew 846x
+- compute2.ocp008pp002400.vodafone.com.au bond0: top rx_cache_reuse share 81% on ens1f0np0; rx_cache_busy skew 15x; rx_cache_full skew 15x
+- compute3.ocp008pp002400.vodafone.com.au bond0: top rx_cache_reuse share 80% on ens1f0np0
