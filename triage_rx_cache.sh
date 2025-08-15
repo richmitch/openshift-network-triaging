@@ -94,8 +94,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Compute bond-level imbalance before printing
-compute_bond_imbalance
+ # (deferred) bond imbalance computation occurs later after data collection
 
 require_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -385,7 +384,7 @@ compute_bond_imbalance() {
     BOND_BUSY_SKEW_RATIO["$kb"]=$busy_skew
     if (( busy_skew >= SKEW_RATIO )); then
       reasons+=("rx_cache_busy skew ${busy_skew}x")
-    }
+    fi
 
     # full skew
     local full_skew=0
@@ -408,6 +407,9 @@ compute_bond_imbalance() {
     fi
   done
 }
+
+# Compute bond-level imbalance now that metrics and sets are populated
+compute_bond_imbalance
 
 case "$OUTPUT_MODE" in
   table)
