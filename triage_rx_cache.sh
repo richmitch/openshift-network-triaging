@@ -13,13 +13,15 @@ SCRIPT_NAME=$(basename "$0")
 
 THRESHOLD=0
 OUTPUT_MODE="both" # values: both|table|json
+LABEL_SELECTOR=""
 
 print_usage() {
   cat <<EOF
-Usage: ${SCRIPT_NAME} [--threshold N] [--table-only|--json-only]
+Usage: ${SCRIPT_NAME} [--threshold N] [--label key=value[,k2=v2]] [--table-only|--json-only]
 
 Options:
   -t, --threshold N   Numeric threshold to flag an issue (default: 0; issue if value > N)
+  -l, --label SELECT  Label selector to filter nodes (e.g. role=worker or 'k1=v1,k2=v2')
       --table-only    Print only the table output
       --json-only     Print only the JSON output
   -h, --help          Show this help
@@ -49,6 +51,15 @@ while [[ $# -gt 0 ]]; do
       OUTPUT_MODE="json"
       shift
       ;;
+    -l|--label)
+      shift
+      if [[ $# -eq 0 ]]; then
+        echo "Error: --label requires a selector value (e.g. role=worker)" >&2
+        exit 1
+      fi
+      LABEL_SELECTOR=$1
+      shift
+      ;;
     -h|--help)
       print_usage
       exit 0
@@ -71,7 +82,11 @@ require_cmd() {
 require_cmd oc
 
 get_all_nodes() {
-  oc get nodes -o name | sed 's#^node/##'
+  if [[ -n "$LABEL_SELECTOR" ]]; then
+    oc get nodes -l "$LABEL_SELECTOR" -o name | sed 's#^node/##'
+  else
+    oc get nodes -o name | sed 's#^node/##'
+  fi
 }
 
 # Run remote collection on a node. Prints only lines of the form:
@@ -103,7 +118,11 @@ while IFS= read -r _n; do
 done < <(get_all_nodes)
 
 if [[ ${#NODES[@]} -eq 0 ]]; then
-  echo "No nodes found. Are you logged into the cluster?" >&2
+  if [[ -n "$LABEL_SELECTOR" ]]; then
+    echo "No nodes found for label selector: '$LABEL_SELECTOR'. Are you logged into the cluster?" >&2
+  else
+    echo "No nodes found. Are you logged into the cluster?" >&2
+  fi
   exit 1
 fi
 
