@@ -94,8 +94,13 @@ collect_on_node() {
 }
 
 declare -a RAW_RESULTS
+declare -a NODES
 
-readarray -t NODES < <(get_all_nodes)
+# Collect nodes (portable for bash 3.2)
+NODES=()
+while IFS= read -r _n; do
+  [[ -n "$_n" ]] && NODES+=("$_n")
+done < <(get_all_nodes)
 
 if [[ ${#NODES[@]} -eq 0 ]]; then
   echo "No nodes found. Are you logged into the cluster?" >&2
@@ -117,8 +122,12 @@ if [[ ${#RAW_RESULTS[@]} -eq 0 ]]; then
   exit 0
 fi
 
-# Sort results to ensure stable grouped output
-readarray -t SORTED_RESULTS < <(printf '%s\n' "${RAW_RESULTS[@]}" | sort -k1,1 -k2,2 -k3,3 -k4,4)
+# Sort results to ensure stable grouped output (portable for bash 3.2)
+declare -a SORTED_RESULTS
+SORTED_RESULTS=()
+while IFS= read -r _line; do
+  SORTED_RESULTS+=("$_line")
+done < <(printf '%s\n' "${RAW_RESULTS[@]}" | sort -k1,1 -k2,2 -k3,3 -k4,4)
 
 # Build structures
 declare -A SET_NODES=()
@@ -158,9 +167,43 @@ for line in "${SORTED_RESULTS[@]}"; do
 done
 
 print_table() {
-  printf '%-30s %-16s %-16s %-28s %12s %-7s\n' "NODE" "BOND" "INTERFACE" "METRIC" "VALUE" "ISSUE"
-  printf '%-30s %-16s %-16s %-28s %12s %-7s\n' "------------------------------" "----------------" "----------------" "----------------------------" "------------" "-------"
+  # Determine dynamic widths from data and headers
+  local w_node=${#"NODE"}
+  local w_bond=${#"BOND"}
+  local w_iface=${#"INTERFACE"}
+  local w_metric=${#"METRIC"}
+  local w_value=${#"VALUE"}
+  local w_issue=${#"ISSUE"}
+
   local node bond iface metric value issue
+  for line in "${SORTED_RESULTS[@]}"; do
+    IFS=$'\t' read -r node bond iface metric value < <(parse_line_tokens "$line")
+    [[ -n "$node" ]] || continue
+    (( ${#node}   > w_node  )) && w_node=${#node}
+    (( ${#bond}   > w_bond  )) && w_bond=${#bond}
+    (( ${#iface}  > w_iface )) && w_iface=${#iface}
+    (( ${#metric} > w_metric)) && w_metric=${#metric}
+    (( ${#value}  > w_value )) && w_value=${#value}
+    # issue will be 'yes' or 'no'
+  done
+  (( 3 > w_issue )) && w_issue=3 # length of 'yes'
+
+  # Helper to print a separator of dashes matching widths
+  local sep_node sep_bond sep_iface sep_metric sep_value sep_issue
+  sep_node=$(printf '%*s' "$w_node" "" | tr ' ' '-')
+  sep_bond=$(printf '%*s' "$w_bond" "" | tr ' ' '-')
+  sep_iface=$(printf '%*s' "$w_iface" "" | tr ' ' '-')
+  sep_metric=$(printf '%*s' "$w_metric" "" | tr ' ' '-')
+  sep_value=$(printf '%*s' "$w_value" "" | tr ' ' '-')
+  sep_issue=$(printf '%*s' "$w_issue" "" | tr ' ' '-')
+
+  # Header
+  printf "%-${w_node}s %-${w_bond}s %-${w_iface}s %-${w_metric}s %${w_value}s %-${w_issue}s\n" \
+    "NODE" "BOND" "INTERFACE" "METRIC" "VALUE" "ISSUE"
+  printf "%-${w_node}s %-${w_bond}s %-${w_iface}s %-${w_metric}s %${w_value}s %-${w_issue}s\n" \
+    "$sep_node" "$sep_bond" "$sep_iface" "$sep_metric" "$sep_value" "$sep_issue"
+
+  # Rows
   for line in "${SORTED_RESULTS[@]}"; do
     IFS=$'\t' read -r node bond iface metric value < <(parse_line_tokens "$line")
     [[ -n "$node" ]] || continue
@@ -168,7 +211,8 @@ print_table() {
     if [[ -n "${IFACE_HAS_ISSUE["$node|$bond|$iface"]:-}" ]]; then
       issue="yes"
     fi
-    printf '%-30s %-16s %-16s %-28s %12s %-7s\n' "$node" "$bond" "$iface" "$metric" "$value" "$issue"
+    printf "%-${w_node}s %-${w_bond}s %-${w_iface}s %-${w_metric}s %${w_value}s %-${w_issue}s\n" \
+      "$node" "$bond" "$iface" "$metric" "$value" "$issue"
   done
 }
 
