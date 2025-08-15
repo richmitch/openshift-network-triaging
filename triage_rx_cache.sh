@@ -331,11 +331,11 @@ print_json() {
           if [[ $first_metric -eq 0 ]]; then printf ','; fi
           first_metric=0
           printf '"%s":%s' "$metric" "$value"
-        done < <(printf '%s\n' "${!METRIC_VALUE[@]}" | awk -v n="$node" -v b="$bond" -v i="$iface" -F'\|' '$1==n && $2==b && $3==i {print $0}' | sort)
+        done < <(printf '%s\n' "${!METRIC_VALUE[@]}" | awk -v n="$node" -v b="$bond" -v i="$iface" -F'|' '$1==n && $2==b && $3==i {print $0}' | sort)
         printf '},"issue":%s}' "$([[ $iface_issue -eq 1 ]] && echo true || echo false)"
-      done < <(printf '%s\n' "${!SET_IFACES[@]}" | awk -v n="$node" -v b="$bond" -F'\|' '$1==n && $2==b {print $0}' | sort)
+      done < <(printf '%s\n' "${!SET_IFACES[@]}" | awk -v n="$node" -v b="$bond" -F'|' '$1==n && $2==b {print $0}' | sort)
       printf ']}'
-    done < <(printf '%s\n' "${!SET_BONDS[@]}" | awk -v n="$node" -F'\|' '$1==n {print $0}' | sort)
+    done < <(printf '%s\n' "${!SET_BONDS[@]}" | awk -v n="$node" -F'|' '$1==n {print $0}' | sort)
     printf ']}'
   done < <(printf '%s\n' "${!SET_NODES[@]}" | sort)
   printf ']}'
@@ -375,7 +375,7 @@ compute_bond_imbalance() {
       if (( full > 0 )); then
         if (( min_full == 0 || full < min_full )); then min_full=$full; fi
       fi
-    done < <(printf '%s\n' "${!SET_IFACES[@]}" | awk -v n="$node" -v b="$bond" -F'\|' '$1==n && $2==b {print $0}' | sort)
+    done < <(printf '%s\n' "${!SET_IFACES[@]}" | awk -v n="$node" -v b="$bond" -F'|' '$1==n && $2==b {print $0}' | sort)
 
     local reasons=()
     # reuse share
