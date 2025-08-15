@@ -208,7 +208,7 @@ print_table() {
     IFS=$'\t' read -r node bond iface metric value < <(parse_line_tokens "$line")
     [[ -n "$node" ]] || continue
     issue="no"
-    if [[ -n "${IFACE_HAS_ISSUE["$node|$bond|$iface"]:-}" ]]; then
+    if [[ "$value" =~ ^[0-9]+$ ]] && (( value > THRESHOLD )); then
       issue="yes"
     fi
     printf "%-${w_node}s %-${w_bond}s %-${w_iface}s %-${w_metric}s %${w_value}s %-${w_issue}s\n" \
