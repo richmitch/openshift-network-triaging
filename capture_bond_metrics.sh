@@ -150,14 +150,21 @@ collect_on_node() {
     BOND_SELECT_CLEAN="${BOND_SELECT:-}"
     BOND_SELECT_CLEAN="${BOND_SELECT_CLEAN//[[:space:]]/}"
     [ -d /proc/net/bonding ] || exit 0
-    # Build metric pattern
+    # Build metric pattern - always include rx_cache_*
     pattern="^[[:space:]]*rx_cache_"
     if [ "${EXTRA_METRICS:-0}" = "1" ]; then
       pattern="^[[:space:]]*(rx_cache_|rx_no_buffer(_count)?|rx_alloc_failed|rx_page_alloc_fail|rx_desc_drop|rx_no_desc_avail|rx_missed_desc|rx_ring_full|rx_errors|rx_crc_errors|rx_length_errors|rx_fifo_errors|rx_over_errors|rx_missed_errors|rx_dropped|rx_queue_dropped|rx_csum_(err|errors|none)|gro_(packets|merged)|xdp_(drop|tx_errors|redirect_errors)|rx_steer_missed_packets|rx_wqe_err)"
-    elif [ -n "${CUSTOM_METRICS:-}" ]; then
-      # Convert comma-separated list to regex alternation
+    fi
+    if [ -n "${CUSTOM_METRICS:-}" ]; then
+      # Add custom metrics to the pattern
       custom_pattern=$(echo "${CUSTOM_METRICS}" | sed "s/,/|/g")
-      pattern="^[[:space:]]*($custom_pattern)"
+      if [ "${EXTRA_METRICS:-0}" = "1" ]; then
+        # Already have extended pattern, add custom metrics
+        pattern="^[[:space:]]*(rx_cache_|rx_no_buffer(_count)?|rx_alloc_failed|rx_page_alloc_fail|rx_desc_drop|rx_no_desc_avail|rx_missed_desc|rx_ring_full|rx_errors|rx_crc_errors|rx_length_errors|rx_fifo_errors|rx_over_errors|rx_missed_errors|rx_dropped|rx_queue_dropped|rx_csum_(err|errors|none)|gro_(packets|merged)|xdp_(drop|tx_errors|redirect_errors)|rx_steer_missed_packets|rx_wqe_err|$custom_pattern)"
+      else
+        # Just rx_cache_* + custom metrics
+        pattern="^[[:space:]]*(rx_cache_|$custom_pattern)"
+      fi
     fi
     for bf in /proc/net/bonding/*; do
       [ -e "$bf" ] || continue
