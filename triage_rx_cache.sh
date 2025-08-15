@@ -242,34 +242,30 @@ done
 print_table() {
   # Build a TSV of header + rows and let awk compute widths and render table.
   {
-    printf 'NODE\tBOND\tINTERFACE\tMETRIC\tVALUE\tISSUE\n'
-    local node bond iface metric value issue
+    printf 'NODE\tBOND\tINTERFACE\tMETRIC\tVALUE\n'
+    local node bond iface metric value
     for line in "${SORTED_RESULTS[@]}"; do
       IFS=$'\t' read -r node bond iface metric value < <(parse_line_tokens "$line")
       [[ -n "$node" ]] || continue
-      issue="no"
-      if [[ "$value" =~ ^[0-9]+$ ]] && (( value > THRESHOLD )); then
-        issue="yes"
-      fi
-      printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$node" "$bond" "$iface" "$metric" "$value" "$issue"
+      printf '%s\t%s\t%s\t%s\t%s\n' "$node" "$bond" "$iface" "$metric" "$value"
     done
   } | awk -F'\t' '
     function dashes(n,  s,i){ s=""; for(i=0;i<n;i++) s=s"-"; return s }
     {
-      rows[NR,1]=$1; rows[NR,2]=$2; rows[NR,3]=$3; rows[NR,4]=$4; rows[NR,5]=$5; rows[NR,6]=$6;
-      for(i=1;i<=6;i++){ l=length($i); if (l>width[i]) width[i]=l }
+      rows[NR,1]=$1; rows[NR,2]=$2; rows[NR,3]=$3; rows[NR,4]=$4; rows[NR,5]=$5;
+      for(i=1;i<=5;i++){ l=length($i); if (l>width[i]) width[i]=l }
       maxNR=NR
     }
     END{
-      # Format strings: left-align cols 1-4 and 6, right-align col 5
-      fmt=sprintf("%%-%ds %%-%ds %%-%ds %%-%ds %%%ds %%-%ds\n", width[1],width[2],width[3],width[4],width[5],width[6])
+      # Format strings: left-align cols 1-4, right-align col 5
+      fmt=sprintf("%%-%ds %%-%ds %%-%ds %%-%ds %%%ds\n", width[1],width[2],width[3],width[4],width[5])
       # Header
-      printf fmt, rows[1,1], rows[1,2], rows[1,3], rows[1,4], rows[1,5], rows[1,6]
+      printf fmt, rows[1,1], rows[1,2], rows[1,3], rows[1,4], rows[1,5]
       # Separator
-      printf fmt, dashes(width[1]), dashes(width[2]), dashes(width[3]), dashes(width[4]), dashes(width[5]), dashes(width[6])
+      printf fmt, dashes(width[1]), dashes(width[2]), dashes(width[3]), dashes(width[4]), dashes(width[5])
       # Data rows
       for(n=2;n<=maxNR;n++){
-        printf fmt, rows[n,1], rows[n,2], rows[n,3], rows[n,4], rows[n,5], rows[n,6]
+        printf fmt, rows[n,1], rows[n,2], rows[n,3], rows[n,4], rows[n,5]
       }
     }'
 
