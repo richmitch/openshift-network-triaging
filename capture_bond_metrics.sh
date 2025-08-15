@@ -19,10 +19,11 @@ IMBALANCE_PERCENT=80   # percent share threshold for rx_cache_reuse
 SKEW_RATIO=10          # ratio threshold for busy/full skew (max >= ratio * min)
 BOND_FILTER=""        # comma-separated bond names to include (e.g., bond0 or bond0,bond1)
 EXTRA_METRICS=0        # collect additional RX metrics beyond rx_cache_*
+CUSTOM_METRICS=""      # comma-separated list of custom metrics to collect
 
 print_usage() {
   cat <<EOF
-Usage: ${SCRIPT_NAME} [--threshold N] [--label key=value[,k2=v2]] [--bond bond0[,bond1]] [--imbalance-threshold PCT] [--skew-ratio N] [--extra-metrics] [--table-only|--json-only]
+Usage: ${SCRIPT_NAME} [--threshold N] [--label key=value[,k2=v2]] [--bond bond0[,bond1]] [--imbalance-threshold PCT] [--skew-ratio N] [--extra-metrics] [--custom-metrics metric1,metric2] [--table-only|--json-only]
 
 Options:
   -t, --threshold N            Numeric threshold to flag an issue (default: 0; issue if value > N)
@@ -31,6 +32,7 @@ Options:
       --imbalance-threshold PCT  Percent share on a bond's top slave for rx_cache_reuse to flag imbalance (default: 80)
       --skew-ratio N             Ratio for rx_cache_busy/full skew across bond slaves to flag imbalance (default: 10)
       --extra-metrics            Include additional RX/GRO/XDP metrics (rx_no_buffer, rx_dropped, gro_*, xdp_*, etc.)
+      --custom-metrics NAMES     Comma-separated list of specific ethtool metrics to collect (e.g. tx_csum_partial,tx_xmit_more)
       --table-only               Print only the table output
       --json-only                Print only the JSON output
   -h, --help                   Show this help
@@ -100,6 +102,15 @@ while [[ $# -gt 0 ]]; do
       EXTRA_METRICS=1
       shift
       ;;
+    --custom-metrics)
+      shift
+      if [[ $# -eq 0 ]]; then
+        echo "Error: --custom-metrics requires a comma-separated list of metric names" >&2
+        exit 1
+      fi
+      CUSTOM_METRICS=$1
+      shift
+      ;;
     -h|--help)
       print_usage
       exit 0
@@ -133,7 +144,7 @@ get_all_nodes() {
 #   bond=<bond> iface=<iface> metric=<metric> value=<value>
 collect_on_node() {
   local node="$1"
-  oc debug "node/${node}" --quiet -- chroot /host env BOND_SELECT="${BOND_FILTER}" EXTRA_METRICS="${EXTRA_METRICS}" bash -lc '
+  oc debug "node/${node}" --quiet -- chroot /host env BOND_SELECT="${BOND_FILTER}" EXTRA_METRICS="${EXTRA_METRICS}" CUSTOM_METRICS="${CUSTOM_METRICS}" bash -lc '
     set -euo pipefail
     # Normalize optional comma-separated bond selector (strip spaces)
     BOND_SELECT_CLEAN="${BOND_SELECT:-}"
@@ -143,6 +154,10 @@ collect_on_node() {
     pattern="^[[:space:]]*rx_cache_"
     if [ "${EXTRA_METRICS:-0}" = "1" ]; then
       pattern="^[[:space:]]*(rx_cache_|rx_no_buffer(_count)?|rx_alloc_failed|rx_page_alloc_fail|rx_desc_drop|rx_no_desc_avail|rx_missed_desc|rx_ring_full|rx_errors|rx_crc_errors|rx_length_errors|rx_fifo_errors|rx_over_errors|rx_missed_errors|rx_dropped|rx_queue_dropped|rx_csum_(err|errors|none)|gro_(packets|merged)|xdp_(drop|tx_errors|redirect_errors)|rx_steer_missed_packets|rx_wqe_err)"
+    elif [ -n "${CUSTOM_METRICS:-}" ]; then
+      # Convert comma-separated list to regex alternation
+      custom_pattern=$(echo "${CUSTOM_METRICS}" | sed "s/,/|/g")
+      pattern="^[[:space:]]*($custom_pattern)"
     fi
     for bf in /proc/net/bonding/*; do
       [ -e "$bf" ] || continue
@@ -346,7 +361,7 @@ print_json() {
           esac
         done < <(printf '%s\n' "${!METRIC_VALUE[@]}" | awk -v n="$node" -v b="$bond" -v i="$iface" -F'|' '$1==n && $2==b && $3==i {print $0}' | sort)
         printf '}'
-        if [[ $EXTRA_METRICS -eq 1 ]]; then
+        if [[ $EXTRA_METRICS -eq 1 ]] || [[ -n "$CUSTOM_METRICS" ]]; then
           # print non-rx_cache metrics under "extra"
           printf ',"extra":{'
           local fm2=1
