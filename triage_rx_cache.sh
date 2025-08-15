@@ -16,14 +16,16 @@ OUTPUT_MODE="both" # values: both|table|json
 LABEL_SELECTOR=""
 IMBALANCE_PERCENT=80   # percent share threshold for rx_cache_reuse
 SKEW_RATIO=10          # ratio threshold for busy/full skew (max >= ratio * min)
+BOND_FILTER=""        # comma-separated bond names to include (e.g., bond0 or bond0,bond1)
 
 print_usage() {
   cat <<EOF
-Usage: ${SCRIPT_NAME} [--threshold N] [--label key=value[,k2=v2]] [--imbalance-threshold PCT] [--skew-ratio N] [--table-only|--json-only]
+Usage: ${SCRIPT_NAME} [--threshold N] [--label key=value[,k2=v2]] [--bond bond0[,bond1]] [--imbalance-threshold PCT] [--skew-ratio N] [--table-only|--json-only]
 
 Options:
   -t, --threshold N   Numeric threshold to flag an issue (default: 0; issue if value > N)
   -l, --label SELECT  Label selector to filter nodes (e.g. role=worker or 'k1=v1,k2=v2')
+  -b, --bond NAMES    Comma-separated list of bond device names to include (e.g. bond0 or bond0,bond1)
       --imbalance-threshold PCT  Percent share on a bond's top slave for rx_cache_reuse to flag imbalance (default: 80)
       --skew-ratio N             Ratio for rx_cache_busy/full skew across bond slaves to flag imbalance (default: 10)
       --table-only    Print only the table output
@@ -73,6 +75,15 @@ while [[ $# -gt 0 ]]; do
       SKEW_RATIO=$1
       shift
       ;;
+    -b|--bond)
+      shift
+      if [[ $# -eq 0 ]]; then
+        echo "Error: --bond requires a bond name or comma-separated list (e.g., bond0 or bond0,bond1)" >&2
+        exit 1
+      fi
+      BOND_FILTER=$1
+      shift
+      ;;
     -l|--label)
       shift
       if [[ $# -eq 0 ]]; then
@@ -117,12 +128,19 @@ get_all_nodes() {
 #   bond=<bond> iface=<iface> metric=<metric> value=<value>
 collect_on_node() {
   local node="$1"
-  oc debug "node/${node}" --quiet -- chroot /host bash -lc '
+  oc debug "node/${node}" --quiet -- chroot /host env BOND_SELECT="'"${BOND_FILTER}"'" bash -lc '
     set -euo pipefail
     [ -d /proc/net/bonding ] || exit 0
     for bf in /proc/net/bonding/*; do
       [ -e "$bf" ] || continue
       bond_name=$(basename "$bf")
+      # Apply bond filter if provided (BOND_SELECT is a comma-separated list)
+      if [ -n "${BOND_SELECT:-}" ]; then
+        case ",${BOND_SELECT}," in
+          *",${bond_name},"*) ;;
+          *) continue ;;
+        esac
+      fi
       # Extract slave interface names
       awk -F": " "/^Slave Interface:/ {print \$2}" "$bf" | while read -r iface; do
         # ethtool may not expose rx_cache_* for all drivers; ignore errors
