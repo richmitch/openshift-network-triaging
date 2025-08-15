@@ -151,6 +151,7 @@ collect_on_node() {
 }
 
 declare -a RAW_RESULTS
+RAW_RESULTS=()
 declare -a NODES
 
 # Collect nodes (portable for bash 3.2)
