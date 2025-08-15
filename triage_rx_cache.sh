@@ -187,12 +187,13 @@ done
 
 print_table() {
   # Determine dynamic widths from data and headers
-  local w_node=${#"NODE"}
-  local w_bond=${#"BOND"}
-  local w_iface=${#"INTERFACE"}
-  local w_metric=${#"METRIC"}
-  local w_value=${#"VALUE"}
-  local w_issue=${#"ISSUE"}
+  local hdr_node="NODE" hdr_bond="BOND" hdr_iface="INTERFACE" hdr_metric="METRIC" hdr_value="VALUE" hdr_issue="ISSUE"
+  local w_node=${#hdr_node}
+  local w_bond=${#hdr_bond}
+  local w_iface=${#hdr_iface}
+  local w_metric=${#hdr_metric}
+  local w_value=${#hdr_value}
+  local w_issue=${#hdr_issue}
 
   local node bond iface metric value issue
   for line in "${SORTED_RESULTS[@]}"; do
